@@ -1,5 +1,5 @@
 export interface TodoItem {
-  userId: string
+  userId?: string
   todoId: string
   createdAt: string
   name: string

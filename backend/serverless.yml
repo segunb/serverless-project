@@ -4,60 +4,311 @@ service:
 plugins:
   - serverless-webpack
   - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
 
 provider:
   name: aws
-  runtime: nodejs8.10
+  runtime: nodejs12.x
 
   stage: ${opt:stage, 'dev'}
   region: ${opt:region, 'us-east-1'}
 
-functions:
+  environment:
+    TODOS_TABLE: Todos-${self:provider.stage}
+    IMAGE_TABLE: Todos-imgs-${self:provider.stage}
+    TODO_ID_INDEX: TodoIdIndex
+    TODO_USER_INDEX: TodoUserIndex
+    IMAGES_S3_BUCKET: serverless-babalola-udagram-todo-images-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 300
+    CERTIFICATE_DOWNLOAD_URL: https://dev-babalola.eu.auth0.com/.well-known/jwks.json
 
+custom:
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Udacity Cloud ND serverless
+        description: Serverless application project
+
+tracing:
+  lambda: true
+  apiGateway: true
+
+functions:
   Auth:
     handler: src/lambda/auth/auth0Authorizer.handler
 
-  # TODO: Configure this function
   GetTodos:
     handler: src/lambda/http/getTodos.handler
+    role: CustomRoleForGetTodos
     events:
       - http:
           method: get
           path: todos
+          authorizer: Auth
+          cors: true
 
-  # TODO: Configure this function
-  GetTodos:
   CreateTodo:
     handler: src/lambda/http/createTodo.handler
+    role: CustomRoleForCreateTodos
     events:
       - http:
           method: post
           path: todos
+          authorizer: Auth
+          cors: true
 
-  # TODO: Configure this function
   UpdateTodo:
     handler: src/lambda/http/updateTodo.handler
+    role: CustomRoleForUpdateTodos
     events:
       - http:
           method: patch
           path: todos/{todoId}
+          authorizer: Auth
+          cors: true
 
-  # TODO: Configure this function
   DeleteTodo:
     handler: src/lambda/http/deleteTodo.handler
+    role: CustomRoleForDeleteTodos
     events:
       - http:
           method: delete
           path: todos/{todoId}
+          authorizer: Auth
+          cors: true
 
-  # TODO: Configure this function
   GenerateUploadUrl:
     handler: src/lambda/http/generateUploadUrl.handler
+    role: CustomRoleForS3Access
     events:
       - http:
           method: post
           path: todos/{todoId}/attachment
+          authorizer: Auth
+          cors: true
 
 resources:
   Resources:
-    # TODO: Add any necessary AWS resources
+    ImagesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.IMAGES_S3_BUCKET}
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy1:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: GetPolicy
+          Version: "2012-10-17"
+          Statement:
+            - Sid: PublicReadForGetBucketObjects
+              Effect: Allow
+              Principal: '*'
+              Action: 's3:GetObject'
+              Resource: 'arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*'
+        Bucket: !Ref ImagesBucket
+
+    TodosDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+          - AttributeName: todoId
+            AttributeType: S
+        KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: todoId
+          KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.TODOS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.TODO_ID_INDEX}
+            KeySchema:
+              - AttributeName: todoId
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    CustomRoleForS3Access:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: CustomRoleForS3Access
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: s3AccessPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:GetObject
+                  Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+
+    CustomRoleForGetTodos:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: CustomRoleForGetTodos
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: getTodosDynamoPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Query
+                  Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Query
+                  Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}/index/${self:provider.environment.TODO_USER_INDEX}
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                      - ':'
+                      -
+                        - 'arn:aws:logs'
+                        - Ref: 'AWS::Region'
+                        - Ref: 'AWS::AccountId'
+                        - 'log-group:/aws/lambda/*:*:*'
+
+    CustomRoleForCreateTodos:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: CustomRoleForCreateTodos
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: createTodosDynamoPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                  Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - 'Fn::Join':
+                        - ':'
+                        -
+                          - 'arn:aws:logs'
+                          - Ref: 'AWS::Region'
+                          - Ref: 'AWS::AccountId'
+                          - 'log-group:/aws/lambda/*:*:*'
+
+    CustomRoleForDeleteTodos:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: CustomRoleForDeleteTodos
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: deleteTodosDynamoPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:DeleteItem
+                  Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Query
+                  Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}/index/${self:provider.environment.TODO_ID_INDEX}
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - arn:aws:logs:${self:provider.region}:*:log-group:/aws/lambda/*:*:*
+
+    CustomRoleForUpdateTodos:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: CustomRoleForUpdateTodos
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - lambda.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: updateTodosDynamoPolicy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:UpdateItem
+                  Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+                - Effect: Allow
+                  Action:
+                    - dynamodb:Query
+                  Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}/index/${self:provider.environment.TODO_ID_INDEX}
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource:
+                    - arn:aws:logs:${self:provider.region}:*:log-group:/aws/lambda/*:*:*
