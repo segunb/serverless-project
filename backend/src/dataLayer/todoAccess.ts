@@ -1,16 +1,20 @@
 import {DocumentClient} from "aws-sdk/clients/dynamodb";
 import {TodoItem} from "../models/TodoItem";
+
 import {UpdateTodoRequest} from "../requests/UpdateTodoRequest";
-import * as AWS from "aws-sdk";
-import {createLogger} from "../utils/logger";
-import * as uuid from 'uuid'
 import {CreateTodoRequest} from "../requests/CreateTodoRequest";
 
+import * as AWS from "aws-sdk";
+import * as AWSXRay from 'aws-xray-sdk'
+import {createLogger} from "../utils/logger";
+import * as uuid from 'uuid'
+
 const logger = createLogger('todoAccess')
+const AWSX = AWSXRay.captureAWS(AWS)
 
 export class todoAccess {
     constructor(
-        private readonly docClient: DocumentClient = new AWS.DynamoDB.DocumentClient(),
+        private readonly docClient: DocumentClient = new AWSX.DynamoDB.DocumentClient(),
         private readonly todoTable: string = process.env.TODOS_TABLE,
         private readonly todoIdIndex: string = process.env.TODO_ID_INDEX) {
     }

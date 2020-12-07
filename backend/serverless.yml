@@ -5,6 +5,7 @@ plugins:
   - serverless-webpack
   - serverless-iam-roles-per-function
   - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
 
 provider:
   name: aws
@@ -22,6 +23,10 @@ provider:
     SIGNED_URL_EXPIRATION: 300
     CERTIFICATE_DOWNLOAD_URL: https://dev-babalola.eu.auth0.com/.well-known/jwks.json
 
+  tracing:
+    lambda: true
+    apiGateway: true
+
 custom:
   documentation:
     api:
@@ -29,10 +34,13 @@ custom:
         version: v1.0.0
         title: Udacity Cloud ND serverless
         description: Serverless application project
-
-tracing:
-  lambda: true
-  apiGateway: true
+#    models:
+#      - name: CreateTodoRequest
+#        contentType: application/json
+#        schema: ${file(src/models/create-todo-request.json)}
+#      - name: UpdateTodoRequest
+#        contentType: application/json
+#        schema: ${file(src/models/update-todo-request.json)}
 
 functions:
   Auth:
@@ -57,6 +65,9 @@ functions:
           path: todos
           authorizer: Auth
           cors: true
+          request:
+            schema:
+              application/json: ${file(src/models/create-todo-request.json)}
 
   UpdateTodo:
     handler: src/lambda/http/updateTodo.handler
@@ -67,6 +78,9 @@ functions:
           path: todos/{todoId}
           authorizer: Auth
           cors: true
+          request:
+            schema:
+              application/json: ${file(src/models/update-todo-request.json)}
 
   DeleteTodo:
     handler: src/lambda/http/deleteTodo.handler
@@ -312,3 +326,21 @@ resources:
                     - logs:PutLogEvents
                   Resource:
                     - arn:aws:logs:${self:provider.region}:*:log-group:/aws/lambda/*:*:*
+
+#    CreateRequestBodyValidator:
+#      Type: AWS::ApiGateway::RequestValidator
+#      Properties:
+#        Name: 'create-request-body-validator'
+#        RestApiId:
+#          Ref: ApiGatewayRestApi
+#        ValidateRequestBody: true
+#        ValidateRequestParameters: false
+#
+#    UpdateRequestBodyValidator:
+#      Type: AWS::ApiGateway::RequestValidator
+#      Properties:
+#        Name: 'update-request-body-validator'
+#        RestApiId:
+#          Ref: ApiGatewayRestApi
+#        ValidateRequestBody: true
+#        ValidateRequestParameters: false
